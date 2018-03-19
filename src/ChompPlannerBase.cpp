@@ -1,16 +1,15 @@
 /*
  * ChompPlannerBase.cpp
  *
- *  Created on: Aug 17, 2017
+ *  Created on: Mar 19, 2018
  *      Author: Takahiro Miki
- *   Institute: ETH Zurich, Robotic Systems Lab
+ *	 Institute: Univ of Tokyo AILab, HongoAerospace.inc
+ *
  */
 
-#include <locomotion_planner/trajectory_planner/ChompPlannerBase.hpp>
+#include <chomp_planner/ChompPlannerBase.hpp>
 
-using namespace Eigen;
-
-namespace locomotion_planner {
+namespace chomp_planner {
 
   ChompPlannerBase::ChompPlannerBase(){
 
@@ -21,4 +20,4 @@ namespace locomotion_planner {
   }
 
 
-} /* namespace locomotion_planner */
+} /* namespace chomp_planner */

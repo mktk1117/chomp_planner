@@ -1,0 +1,5 @@
+<library path="lib/libchomp_planner_nodelet">
+  <class name="chomp_planner/ChompPlannerNodelet" type="chomp_planner_nodelet::ChompPlannerNodelet" base_class_type="nodelet::Nodelet">
+  <description>ChompPlanner nodelet</description>
+  </class>
+</library>

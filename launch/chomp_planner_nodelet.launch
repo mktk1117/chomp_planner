@@ -1,0 +1,16 @@
+<launch>
+  <arg name="voxel_size" default="0.10"/>
+  <arg name="generate_esdf" default="true" />
+  <arg name="manager_name" default="nodelet_manager" />
+
+  <node pkg="nodelet" type="nodelet" name="chomp_node"
+  args="load chomp_planner/ChompPlannerNodelet $(arg manager_name)" output="screen">
+  <param name="tsdf_voxel_size" value="$(arg voxel_size)" />
+  <!-- <param name="tsdf_voxels_per_side" value="16" />    -->
+  <!-- <param name="voxel_carving_enabled" value="true" /> -->
+  <!-- <param name="color_mode" value="color" />           -->
+  <!-- <param name="max_ray_length_m" value="3.0" />       -->
+  <!-- <param name="esdf_max_distance_m" value="1.0" />    -->
+  </node>
+
+</launch>
