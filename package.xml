@@ -17,6 +17,9 @@
   <depend>voxblox_ros</depend>
   <depend>voxblox_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>trajectory_msgs</depend>
+  <depend>curves</depend>
   <depend>nodelet</depend>
   <!-- <depend>trajectory_msgs</depend> -->
 

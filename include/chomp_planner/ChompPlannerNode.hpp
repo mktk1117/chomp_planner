@@ -10,7 +10,7 @@
 #pragma once
 
 #include "chomp_planner/SimpleChompPlanner.hpp"
-// #include "curves/PolynomialSplineVectorSpaceCurve.hpp"
+#include "curves/PolynomialSplineVectorSpaceCurve.hpp"
 // #include <memory>
 
 #include <voxblox/core/esdf_map.h>
@@ -19,6 +19,7 @@
 #include "voxblox_ros/tsdf_server.h"
 
 #include <geometry_msgs/PointStamped.h>
+#include <nav_msgs/Odometry.h>
 #include <ros/ros.h>
 
 using namespace voxblox;
@@ -46,34 +47,45 @@ class ChompPlannerNode
   // void clickedPointCallback(const geometry_msgs::PointStamped& message);
   //
   // void planTrajectory(const Eigen::Vector3d start, const Eigen::Vector3d goal);
-  void publishLine(std::vector<Eigen::Vector3d> trajectory);
-  // void publishLineFromCurve(PolynomialSplineQuinticVector3Curve curve);
+  void publishCommandTrajectory(const std::vector<Eigen::Vector4d>& trajectory);
+  void publishCommandTrajectory(const std::vector<Eigen::Vector3d>& trajectory);
+  void publishCommandTrajectory(const PolynomialSplineQuinticVector3Curve& curve);
+  void publishLine(const std::vector<Eigen::Vector4d>& trajectory);
+  void publishLineFromCurve(const PolynomialSplineQuinticVector3Curve& curve);
   // void publishStartGoalMarker(Eigen::Vector3d& startPos, Eigen::Vector3d& goalPos);
   void goalPoseCallback(const geometry_msgs::PoseStamped& message);
+  void odometryCallback(const nav_msgs::Odometry& message);
+  // void commandPoseCallback(const geometry_msgs::Odometry& message);
   void esdfMapCallback(const voxblox_msgs::LayerConstPtr layerMsg);
   void planTrajectory(const Eigen::Vector3d& start, const Eigen::Vector3d& goal);
   //
   // Trajectory planner
   SimpleChompPlanner chomp_;
   Eigen::Vector3d startPosition_;
+  Eigen::Vector3d startVelocity_;
   Eigen::Vector3d goalPosition_;
+  double goalYaw_;
 
   // Coordinate parameters
   std::string baseFrameId_;
 
   // Chomp parameters
+  bool fitCurve_;
   int numberOfPoints_;
   double heightClearance_;
   double collisionThreshold_;
+  double velocity_;
 
   //! ROS node handle.
   ros::NodeHandle nodeHandle_;
   ros::NodeHandle privateNodeHandle_;
 
   //! Goal/commamd topics.
+  ros::Publisher commandTrajectoryPublisher_;
   ros::Subscriber clickedPointSubscriber_;
   ros::Subscriber goalPoseSubscriber_;
   ros::Subscriber startPoseSubscriber_;
+  ros::Subscriber odometrySubscriber_;
   bool updatedStartPoint_;
 
 

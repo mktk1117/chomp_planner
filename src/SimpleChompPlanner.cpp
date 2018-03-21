@@ -12,339 +12,391 @@
 
 using namespace std;
 using namespace Eigen;
-// using namespace curves;
-// typedef typename curves::PolynomialSplineQuinticVector3Curve::ValueType CValueType;
-// typedef typename curves::PolynomialSplineQuinticVector3Curve CurvePSQV3; 
-// typedef typename curves::Time Time;
+using namespace curves;
+typedef typename curves::PolynomialSplineQuinticVector3Curve::ValueType CValueType;
+typedef typename curves::PolynomialSplineQuinticVector3Curve CurvePSQV3; 
+typedef typename curves::Time Time;
 
 namespace chomp_planner {
 
-    SimpleChompPlanner::SimpleChompPlanner(const double collisionThreshold, const int numberOfPoints) :
-    objectFunctionLambda_(0.05),
-    obstacleCostThreshold_(1.0),
-    iterationConvergenceThreshold_(0.001),
-    updateCoeff_(0.001),
-    maxIteration_(4000),
-    collisionThreshold_(collisionThreshold),
-    numberOfPoints_(numberOfPoints)
-    {
-    }
-
-  SimpleChompPlanner::~SimpleChompPlanner(){ }
-
-
-  void SimpleChompPlanner::updateSignedDistanceField(const std::shared_ptr<voxblox::EsdfMap>& esdfMap){
-    esdfMap_ = esdfMap;
+SimpleChompPlanner::SimpleChompPlanner(const ros::NodeHandle& nh) :
+  objectFunctionLambda_(0.05),
+  obstacleCostThreshold_(1.0),
+  iterationConvergenceThreshold_(0.001),
+  updateCoeff_(0.001),
+  maxIteration_(4000),
+  collisionThreshold_(0.05),
+  dt_(0.1)
+  {
+    getRosParameters(nh);
   }
 
+SimpleChompPlanner::~SimpleChompPlanner(){ }
 
-  double SimpleChompPlanner::trajectoryEvaluation(std::vector<Vector3d>& trajectory){
-    double length = 0;
-    Vector3d startPosition = trajectory[0];
-    Vector3d goalPosition = trajectory[trajectory.size() - 1];
-    for (int i = 1; i < trajectory.size() - 1; i++){
-      Eigen::Vector3d p = trajectory[i];
-      Eigen::Vector3d p_prev = trajectory[i - 1];
-      double d;
-      esdfMap_->getDistanceAtPosition(p, &d);
-      if (d < collisionThreshold_)
-        return -1;
-      length += (p - p_prev).norm();
-    }
-    return length;
+bool SimpleChompPlanner::getRosParameters(const ros::NodeHandle& nh) {
+
+  if (!nh.param<double>("object_function_lambda", objectFunctionLambda_, 0.05)) {
+    ROS_WARN("Could not load object function lambda.");
   }
+  if (!nh.param<double>("obstacle_cost_threshold", obstacleCostThreshold_, 1.0)) {
+    ROS_WARN("Could not load obstacle cost threshold.");
+  }
+  if (!nh.param<double>("iteration_conversion_min", iterationConvergenceThreshold_, 0.001)) {
+    ROS_WARN("Could not load iteration_conversion_min.");
+  }
+  if (!nh.param<double>("update_coeff", updateCoeff_, 0.001)) {
+    ROS_WARN("Could not load update_coeff.");
+  }
+  if (!nh.param<int>("max_iteration", maxIteration_, 4000)) {
+    ROS_WARN("Could not load max_iteration.");
+  }
+  if (!nh.param<double>("collision_threshold", collisionThreshold_, 0.05)) {
+    ROS_WARN("Could not load collision threshold.");
+  }
+  if (!nh.param<double>("trajectory_dt", dt_, 0.1)) {
+    ROS_WARN("Could not load trajectory dt.");
+  }
+  if (!nh.param<double>("chomp_initial_noise_variance", chompNoiseVariance_, 0.2)) {
+    ROS_WARN("Could not load chomp_initial_noise_variance.");
+  }
+  if (!nh.param<int>("chomp_trial_iteration", chompTrialIteration_, 1)) {
+    ROS_WARN("Could not load chomp_trial_iteration.");
+  }
+  if (!nh.param<bool>("chomp_trial_break", chompTrialBreak_, true)) {
+    ROS_WARN("Could not load chomp_trial_break.");
+  }
+  if (!nh.param<double>("chomp_start_sphere_length", startSphereLength_, 0.4)) {
+    ROS_WARN("Could not load chomp_start_sphere_length.");
+  }
+  if (!nh.param<double>("chomp_start_sphere_time", startSphereTime_, 1.0)) {
+    ROS_WARN("Could not load chomp_start_sphere_time.");
+  }
+}
 
-  std::vector<Vector3d> SimpleChompPlanner::chompFit(std::vector<Vector3d>& trajectory){
-    double goalTime = 10.0;
-    dt_ = goalTime / numberOfPoints_;
-    for (int cnt = 0; cnt < maxIteration_; cnt++){
-      cout << "iteration " << cnt << endl;
-      double diff = 0;
-      for (int j = 0; j < trajectory.size(); j++){
-        // double d;
-        // Vector3d gradient;
-        // esdfMap_->getDistanceAndGradientAtPosition(trajectory[j], &d, &gradient);
-        // cout << "x = " << trajectory[j] << endl;
-        // cout << "d = " << d << "grad = " << gradient << endl;
-        Eigen::Vector3d delta = updateCoeff_ * getObjectFunctionGradient(trajectory, j);
-        trajectory[j] -= delta;
-        diff += delta.norm();
+
+
+void SimpleChompPlanner::updateSignedDistanceField(const std::shared_ptr<voxblox::EsdfMap>& esdfMap){
+  esdfMap_ = esdfMap;
+}
+
+
+double SimpleChompPlanner::trajectoryEvaluation(const std::vector<Vector4d>& trajectory){
+  double length = 0;
+  Vector3d startPosition = trajectory[0].head(3);
+  Vector3d goalPosition = trajectory[trajectory.size() - 1].head(3);
+  for (int i = 1; i < trajectory.size() - 1; i++){
+    Eigen::Vector3d p = trajectory[i].head(3);
+    Eigen::Vector3d p_prev = trajectory[i - 1].head(3);
+    double d;
+    esdfMap_->getDistanceAtPosition(p, &d);
+    // cout << "trajectory evaluation: d at " << p << " = " << d << endl;
+    if (d < collisionThreshold_ and (p - startPosition).norm() > startSphereLength_)
+      return -1;
+    length += (p - p_prev).norm();
+  }
+  return length;
+}
+
+double SimpleChompPlanner::trajectoryEvaluation(const std::vector<Vector3d>& trajectory){
+  double length = 0;
+  Vector3d startPosition = trajectory[0];
+  Vector3d goalPosition = trajectory[trajectory.size() - 1];
+  for (int i = 1; i < trajectory.size() - 1; i++){
+    Eigen::Vector3d p = trajectory[i];
+    Eigen::Vector3d p_prev = trajectory[i - 1];
+    double d;
+    esdfMap_->getDistanceAtPosition(p, &d);
+    // cout << "trajectory evaluation: d at " << p << " = " << d << endl;
+    if (d < collisionThreshold_ and (p - startPosition).norm() > startSphereLength_)
+      return -1;
+    length += (p - p_prev).norm();
+  }
+  return length;
+}
+
+std::vector<Vector4d> SimpleChompPlanner::chompFit(const PolynomialCurveVariable& curveVariable){
+  std::vector <Eigen::Vector3d> initialTrajectory, chompResultTrajectory;
+  std::vector <Eigen::Vector4d> resultTrajectory;
+  std::vector <double> trajectoryTime;
+  std::random_device rnd;
+  std::mt19937 gen(rnd());
+  std::normal_distribution<> d(0, chompNoiseVariance_);
+  int numberOfPoints = (curveVariable.goalPointWithTime[3] - curveVariable.startPointWithTime[3]) / dt_;
+  Eigen::Vector4d diffV = curveVariable.goalPointWithTime - curveVariable.startPointWithTime;
+  // cout << "number of points = " << numberOfPoints << endl;
+  // cout << "diffV = " << diffV << endl;
+  for (int i = 0; i < numberOfPoints; i++) {
+    Eigen::Vector4d point = curveVariable.startPointWithTime + diffV / numberOfPoints * i;
+    Eigen::Vector3d p = point.head(3);
+    // cout << "p = " << p << endl;
+    if (i != 0 and i != numberOfPoints_ - 1) {
+      p.x() += d(gen);
+      p.y() += d(gen);
+      p.z() += d(gen);
+    }
+    initialTrajectory.push_back(p);
+    trajectoryTime.push_back(point[3]);
+  }
+  chompResultTrajectory = chompFit(initialTrajectory);
+  for (int i = 0; i < chompResultTrajectory.size(); i++) {
+    Eigen::Vector4d p;
+    p.head(3) = chompResultTrajectory[i];
+    p[3] = trajectoryTime[i];
+    resultTrajectory.push_back(p);
+  }
+  return resultTrajectory;
+}
+
+std::vector<Vector3d> SimpleChompPlanner::chompFit(std::vector<Vector3d>& trajectory){
+  for (int cnt = 0; cnt < maxIteration_; cnt++){
+    double diff = 0;
+    for (int j = 0; j < trajectory.size(); j++){
+      Eigen::Vector3d delta = updateCoeff_ * getObjectFunctionGradient(trajectory, j);
+      trajectory[j] -= delta;
+      diff += delta.norm();
+    }
+    if( diff < iterationConvergenceThreshold_)
+      break;
+  }
+  return trajectory;
+}
+
+double SimpleChompPlanner::getObstacleCost(Vector3d x){
+  double d;
+  esdfMap_->getDistanceAtPosition(x, &d);
+  if( d < 0)
+    return -d + obstacleCostThreshold_ / 2.0;
+  else if( d <= obstacleCostThreshold_)
+    return 1.0 / (2 * obstacleCostThreshold_) * (d - obstacleCostThreshold_) * (d - obstacleCostThreshold_);
+  else
+    return 0;
+}
+
+Vector3d SimpleChompPlanner::getObstacleCostGradient(Vector3d x){
+  double d;
+  Vector3d gradient;
+  esdfMap_->getDistanceAndGradientAtPosition(x, &d, &gradient);
+  if( d < 0)
+    return -gradient;
+  else if( d <= obstacleCostThreshold_)
+    return 1.0 / obstacleCostThreshold_ * (d - obstacleCostThreshold_) * gradient;
+  else
+    return Vector3d(0, 0, 0);
+}
+
+Vector3d SimpleChompPlanner::getObstacleFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
+  int j = trajectoryIndex;
+
+  if( j > 0 && j < trajectory.size() - 1){
+    double c = getObstacleCost(trajectory[j]);
+    Vector3d x_dt, x_dt2, x_dt_normalized, c_grad, k;
+    Matrix3d I = Matrix3d::Identity();
+    x_dt = (trajectory[j] - trajectory[j - 1]) / dt_;
+    x_dt2 = (trajectory[j + 1] - 2 * trajectory[j] + trajectory[j - 1]) / (dt_ * dt_);
+    x_dt_normalized = x_dt / x_dt.norm();
+    c_grad = getObstacleCostGradient(trajectory[j]);
+    k = 1.0 / x_dt.norm() * (I - x_dt_normalized * x_dt_normalized.transpose()) * x_dt2;
+    if (!(std::isnan(k.x()) or std::isnan(k.y()) or std::isnan(k.z())))
+      return x_dt.norm() * (I - x_dt_normalized * x_dt_normalized.transpose()) * c_grad - c * k;
+    else
+      return Vector3d(0, 0, 0);
+  }
+  else
+    return Vector3d(0, 0, 0);
+}
+
+Vector3d SimpleChompPlanner::getSmoothFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
+  int j = trajectoryIndex;
+  if( j > 0 && j < trajectory.size() - 1){
+    Vector3d x_dt2 = (trajectory[j + 1] - 2 * trajectory[j] + trajectory[j - 1]) / (dt_ * dt_);
+    return -x_dt2;
+  }
+  else
+    return Vector3d(0, 0, 0);
+}
+
+Vector3d SimpleChompPlanner::getObjectFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
+  return getObstacleFunctionGradient(trajectory, trajectoryIndex) + 
+    objectFunctionLambda_ * getSmoothFunctionGradient(trajectory, trajectoryIndex);
+}
+
+
+double SimpleChompPlanner::curveEvaluation(const CurvePSQV3& curve){
+  std::vector<Vector3d> trajectory;
+  double startTime = curve.getMinTime();
+  double endTime = curve.getMaxTime();
+  CValueType value;
+  for (double t = startTime; t < endTime; t+=dt_){
+    curve.evaluate(value, t);
+    Vector3d p(value[0], value[1], value[2]);
+    trajectory.push_back(p);
+  }
+  if (trajectory.size() > 0)
+    return trajectoryEvaluation(trajectory);
+  else
+    return 0;
+}
+
+bool SimpleChompPlanner::curveCollisionCheck(const CurvePSQV3& curve, std::vector<double>& collisionTimes){
+  // cout << "collision check" << endl;
+  collisionTimes.clear();
+  CValueType value;
+  double startTime = curve.getMinTime();
+  double endTime = curve.getMaxTime();
+  for (double t = startTime; t < endTime; t+=dt_){
+    curve.evaluate(value, t);
+    Eigen::Vector3d p(value[0], value[1], value[2]);
+    double d;
+    esdfMap_->getDistanceAtPosition(p, &d);
+    if (d < collisionThreshold_ and (t - startTime) > startSphereTime_)
+      collisionTimes.push_back(t);
+  }
+  if(collisionTimes.size() > 0)
+    return true;
+  else
+    return false;
+}
+
+bool SimpleChompPlanner::curveCollisionCheck(const CurvePSQV3& curve) {
+  // cout << "collision check" << endl;
+  double startSphereTime_ = 1.0;
+  CValueType value;
+  double startTime = curve.getMinTime();
+  double endTime = curve.getMaxTime();
+  for (double t = startTime; t < endTime; t+=0.001){
+    curve.evaluate(value, t);
+    Eigen::Vector3d p(value[0], value[1], value[2]);
+    double d;
+    esdfMap_->getDistanceAtPosition(p, &d);
+    // cout << "curve collision " << p << " = " << d << endl;
+    if (d < collisionThreshold_ and (t - startTime) > startSphereTime_)
+      return true;
+  }
+  return false;
+}
+
+double SimpleChompPlanner::fitCurveFromTrajectory(const PolynomialCurveVariable& curveVariable, 
+    const std::vector<Vector3d>& trajectory, CurvePSQV3& fittedCurve){
+  static int maxCurveFitIteration_ = 10;
+
+  CDerivativeType CinitialVelocity(curveVariable.initialVelocity);
+  CDerivativeType CinitialAcceleration(curveVariable.initialAcceleration);
+  CDerivativeType CfinalVelocity(curveVariable.finalVelocity);
+  CDerivativeType CfinalAcceleration(curveVariable.finalAcceleration);
+
+  std::vector<Vector4d> curvePointsWithTime;
+  curvePointsWithTime.push_back(curveVariable.startPointWithTime);
+  curvePointsWithTime.push_back(curveVariable.goalPointWithTime);
+
+  double endTime = curveVariable.goalPointWithTime[3];
+  double startTime = curveVariable.startPointWithTime[3];
+  double dt = (endTime - startTime) / trajectory.size();
+
+  for (int i = 0; i < maxCurveFitIteration_; i++){
+    PolynomialSplineQuinticVector3Curve curve;
+    std::vector<curves::Time> times;
+    std::vector<CValueType> values;
+    for (Vector4d p : curvePointsWithTime){
+      times.push_back(p[3]);
+      values.push_back(CValueType(p.x(), p.y(), p.z()));
+    }
+    curve.fitCurve(times, values, CinitialVelocity, CinitialAcceleration, CfinalVelocity, CfinalAcceleration);
+    std::vector<double> collisionTimes;
+    if (curveCollisionCheck(curve, collisionTimes)){
+      int prevIndex = 0;
+      for (double t : collisionTimes){
+        int collidedIndexInTrajectory = std::round((t - startTime) / dt);
+        if (collidedIndexInTrajectory - prevIndex > 1){
+          Vector4d pt;
+          pt.head(3) = trajectory[collidedIndexInTrajectory];
+          pt[3] = t;
+          int j = 0;
+          cout << "trajector added " << pt << endl;
+          for(auto p : curvePointsWithTime) {
+            if (t < p[3])
+              curvePointsWithTime.insert(curvePointsWithTime.begin() + j, pt);
+            j++;
+          }
+        }
+        prevIndex = collidedIndexInTrajectory;
       }
-      cout << "diff =  " << diff << endl;
-      if( diff < iterationConvergenceThreshold_)
-        break;
     }
-    return trajectory;
+    else{
+      fittedCurve = curve;
+      return curveEvaluation(fittedCurve);
+    }
   }
+  return -1;
+}
 
-  double SimpleChompPlanner::getObstacleCost(Vector3d x){
-    double d;
-    esdfMap_->getDistanceAtPosition(x, &d);
-    if( d < 0)
-      return -d + obstacleCostThreshold_ / 2.0;
-    else if( d <= obstacleCostThreshold_)
-      return 1.0 / (2 * obstacleCostThreshold_) * (d - obstacleCostThreshold_) * (d - obstacleCostThreshold_);
-    else
-      return 0;
-  }
-
-  Vector3d SimpleChompPlanner::getObstacleCostGradient(Vector3d x){
-    double d;
-    Vector3d gradient;
-    esdfMap_->getDistanceAndGradientAtPosition(x, &d, &gradient);
-    if( d < 0)
-      return -gradient;
-    else if( d <= obstacleCostThreshold_)
-      return 1.0 / obstacleCostThreshold_ * (d - obstacleCostThreshold_) * gradient;
-    else
-      return Vector3d(0, 0, 0);
-  }
-
-  Vector3d SimpleChompPlanner::getObstacleFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
-    int j = trajectoryIndex;
-
-    if( j > 0 && j < trajectory.size() - 1){
-      double c = getObstacleCost(trajectory[j]);
-      Vector3d x_dt, x_dt2, x_dt_normalized, c_grad, k;
-      Matrix3d I = Matrix3d::Identity();
-      x_dt = (trajectory[j] - trajectory[j - 1]) / dt_;
-      x_dt2 = (trajectory[j + 1] - 2 * trajectory[j] + trajectory[j - 1]) / (dt_ * dt_);
-      x_dt_normalized = x_dt / x_dt.norm();
-      c_grad = getObstacleCostGradient(trajectory[j]);
-      k = 1.0 / x_dt.norm() * (I - x_dt_normalized * x_dt_normalized.transpose()) * x_dt2;
-      if (!(std::isnan(k.x()) or std::isnan(k.y()) or std::isnan(k.z())))
-        return x_dt.norm() * (I - x_dt_normalized * x_dt_normalized.transpose()) * c_grad - c * k;
-      else
-        return Vector3d(0, 0, 0);
+double SimpleChompPlanner::chompFitFromCurve(const PolynomialCurveVariable& curveVariable, 
+    const CurvePSQV3& initialCurve, CurvePSQV3& resultCurve){
+    CValueType value;
+    double startTime = initialCurve.getMinTime();
+    double endTime = initialCurve.getMaxTime();
+    double minTrajectoryLength = std::numeric_limits<float>::max();
+    CurvePSQV3 minCurve, chompResultCurve;
+    for (int i = 0; i < chompTrialIteration_; i++) {
+      std::vector<Vector3d> trajectory, resultTrajectory;
+      std::random_device rnd;
+      std::mt19937 gen(rnd());
+      std::normal_distribution<> d(0, chompNoiseVariance_);
+      for (double t = startTime; t < endTime; t+=dt_){
+        initialCurve.evaluate(value, t);
+        Eigen::Vector3d p(value[0], value[1], value[2]);
+        if (t > startTime and t < endTime - dt_) {
+          p.x() += d(gen);
+          p.y() += d(gen);
+          p.z() += d(gen);
+        }
+        trajectory.push_back(p);
+      }
+      resultTrajectory = chompFit(trajectory);
+      // cout << "chomp fit done" << endl;
+      double trajectoryLength = trajectoryEvaluation(resultTrajectory);
+      if (trajectoryEvaluation(resultTrajectory) < 0) {
+        // cout << "chomp fit has collision" << endl;
+        // return -1;
+      }
+      else {
+        trajectoryLength = fitCurveFromTrajectory(curveVariable, resultTrajectory, chompResultCurve);
+        if (trajectoryLength > 0) {
+          if (chompTrialBreak_) {
+            resultCurve = chompResultCurve;
+            return trajectoryLength;
+          }
+          if (trajectoryLength < minTrajectoryLength) {
+            minTrajectoryLength = trajectoryLength;
+            minCurve = chompResultCurve;
+          }
+        }
+      }
+    }
+    if (minTrajectoryLength < std::numeric_limits<float>::max()){
+      resultCurve = minCurve;
+      return minTrajectoryLength;
     }
     else
-      return Vector3d(0, 0, 0);
+      return -1;
+}
+
+int SimpleChompPlanner::fitCurve(const PolynomialCurveVariable curveVariable, CurvePSQV3& resultCurve) {
+  CDerivativeType CinitialVelocity(curveVariable.initialVelocity);
+  CDerivativeType CinitialAcceleration(curveVariable.initialAcceleration);
+  CDerivativeType CfinalVelocity(curveVariable.finalVelocity);
+  CDerivativeType CfinalAcceleration(curveVariable.finalAcceleration);
+
+  std::vector<Vector4d> curvePointsWithTime;
+  curvePointsWithTime.push_back(curveVariable.startPointWithTime);
+  curvePointsWithTime.push_back(curveVariable.goalPointWithTime);
+  std::vector<curves::Time> times;
+  std::vector<CValueType> values;
+  for (Vector4d p : curvePointsWithTime){
+    times.push_back(p[3]);
+    values.push_back(CValueType(p.x(), p.y(), p.z()));
   }
-
-  Vector3d SimpleChompPlanner::getSmoothFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
-    int j = trajectoryIndex;
-    if( j > 0 && j < trajectory.size() - 1){
-      Vector3d x_dt2 = (trajectory[j + 1] - 2 * trajectory[j] + trajectory[j - 1]) / (dt_ * dt_);
-      return -x_dt2;
-    }
-    else
-      return Vector3d(0, 0, 0);
-  }
-
-  Vector3d SimpleChompPlanner::getObjectFunctionGradient(std::vector<Vector3d>& trajectory, int trajectoryIndex){
-    return getObstacleFunctionGradient(trajectory, trajectoryIndex) + objectFunctionLambda_ * getSmoothFunctionGradient(trajectory, trajectoryIndex);
-  }
-
-  // bool SimpleChompPlanner::plan(const Vector3d startPosition, const Vector3d goalPosition, const double goalTime, const CDerivativeType& initialVelocity, const CDerivativeType& initialAcceleration, const CDerivativeType& finalVelocity, const CDerivativeType& finalAcceleration, CurvePSQV3& resultCurve){
-  //   initialVelocity_ = initialVelocity;
-  //   initialAcceleration_ = initialAcceleration;
-  //   finalVelocity_ = finalVelocity;
-  //   finalAcceleration_ = finalAcceleration;
-  //   dt_ = goalTime / numberOfPoints_;
-  //
-  //   Vector3d difference = startPosition - goalPosition;
-  //   difference.z() = 0;
-  //   double d = difference.norm();
-  //   double pertubationLength_ = 0.05 * d;
-  //   int pertubationNumber_ = 10;
-  //   double resolution = map_.getResolution();
-  //   Position mapPosition = map_.getPosition();
-  //   // double y_length = map.getLength().y();
-  //   // double y_size = map.getSize()(1);
-  //   // double resolution = map.getResolution();
-  //   // Position mapPosition = map.getPosition();
-  //   double minLength = 10000;
-  //   int minTrial = 10000;
-  //   CurvePSQV3 minCurve;
-  //   for(int i = 0; i < pertubationNumber_; i++){
-  //     for(int j = 0; j < pertubationNumber_; j++){
-  //       Vector3d middlePosition = (startPosition + goalPosition) / 2;
-  //       cout << "initial middle_pos = " << middlePosition << endl;
-  //       // pertubation
-  //       middlePosition.x() = middlePosition.x() + (i - pertubationNumber_ / 2.0) * pertubationLength_;
-  //       middlePosition.y() = middlePosition.y() + (j - pertubationNumber_ / 2.0) * pertubationLength_;
-  //       if (fabs(middlePosition.x() - mapPosition.x()) > map_.getLength().x()) continue;
-  //       if (fabs(middlePosition.y() - mapPosition.y()) > map_.getLength().y()) continue;
-  //       double middleZ = map_.atPosition(layer_, Position(middlePosition.x(), middlePosition.y()));
-  //       cout << "map at position " << middlePosition.x() << ", " << middlePosition.y() << " = " << middleZ << endl;
-  //       if(std::isnan(middleZ))
-  //         middleZ = std::max(startPosition.z(), goalPosition.z());
-  //       middleZ = std::max(std::max(startPosition.z(), goalPosition.z()), middleZ);
-  //       middlePosition.z() = middleZ + heightClearance_;
-  //
-  //       // double initial_length = (start_pos - middle_pos).norm() + (middle_pos - goal_pos).norm();
-  //       // int number_of_points = initial_length / resolution + 1;
-  //       cout << "--------------------------doing pertubation ----------------------------" << endl;
-  //       cout << "middle_pos = " << middlePosition << endl;
-  //
-  //       CurvePSQV3 curve, result;
-  //       std::vector<curves::Time> times;
-  //       std::vector<CValueType> values;
-  //       //
-  //       times.push_back(0.0);
-  //       values.push_back(CValueType(startPosition.x(), startPosition.y(), startPosition.z()));
-  //       times.push_back(goalTime / 2);
-  //       values.push_back(CValueType(middlePosition.x(), middlePosition.y(), middlePosition.z()));
-  //       times.push_back(goalTime);
-  //       values.push_back(CValueType(goalPosition.x(), goalPosition.y(), goalPosition.z()));
-  //     
-  //       curve.fitCurve(times, values, initialVelocity_, initialAcceleration_, finalVelocity_, finalAcceleration_);
-  //
-  //       int fitTrial = fitFromCurve(curve, result);
-  //       if(fitTrial >= 0){
-  //         cout << "fit from Curve succeeded" << endl;
-  //         if (fitTrial <= minTrial){
-  //           minTrial = fitTrial;
-  //           double l = curveEvaluation(result);
-  //           cout << "trajectory length = " << l << endl;
-  //           if (l > 0 && l < minLength){
-  //             minLength = l;
-  //             minCurve = result;
-  //           }
-  //         }
-  //       }
-  //       else{
-  //         cout << "fit from Curve failed" << endl;
-  //         double l = curveEvaluation(curve);
-  //         cout << "trajectory length = " << l << endl;
-  //         if (l > 0 && l < minLength){
-  //           minLength = l;
-  //           minCurve = curve;
-  //         }
-  //       }
-  //
-  //       // publish_line(trajectory);
-  //       // ros::Rate rate(1000);
-  //       // rate.sleep();
-  //     }
-  //   }
-  //   cout << "min_trajectory length = " << minLength << endl;
-  //   if (minLength == 10000)
-  //     return false;
-  //   else{
-  //     resultCurve = minCurve;
-  //     return true;
-  //   }
-  // }
-
-  // double SimpleChompPlanner::curveEvaluation(CurvePSQV3& curve){
-  //   std::vector<Vector3d> trajectory;
-  //   double startTime = curve.getMinTime();
-  //   double endTime = curve.getMaxTime();
-  //   CValueType value;
-  //   for (double t = startTime; t < endTime; t+=dt_){
-  //     curve.evaluate(value, t);
-  //     Vector3d p(value[0], value[1], value[2]);
-  //     trajectory.push_back(p);
-  //   }
-  //   return trajectoryEvaluation(trajectory);
-  // }
-  //
-  // bool SimpleChompPlanner::curveCollisionCheck(CurvePSQV3& curve, std::vector<double>& collisionTimes){
-  //   // cout << "collision check" << endl;
-  //   collisionTimes.clear();
-  //   CValueType value;
-  //   double startTime = curve.getMinTime();
-  //   double endTime = curve.getMaxTime();
-  //   curve.evaluate(value, startTime);
-  //   Eigen::Vector3d startPosition(value[0], value[1], value[2]);
-  //   curve.evaluate(value, endTime);
-  //   Eigen::Vector3d endPosition(value[0], value[1], value[2]);
-  //   for (double t = startTime; t < endTime; t+=0.001){
-  //     curve.evaluate(value, t);
-  //     Eigen::Vector3d p(value[0], value[1], value[2]);
-  //     if ((p - startPosition).norm() > collisionThreshold_ && (p - endPosition).norm() > collisionThreshold_){
-  //     // cout << "p = " << p << "d = " << sdf_.getInterpolatedDistanceAt(p) << endl;
-  //       if (sdf_.getInterpolatedDistanceAt(p) < collisionThreshold_)
-  //         collisionTimes.push_back(t);
-  //     }
-  //   }
-  //   if(collisionTimes.size() > 0)
-  //     return true;
-  //   else
-  //     return false;
-  // }
-  //
-  // int SimpleChompPlanner::fitCurveFromTrajectory(double startTime, double endTime, std::vector<Vector3d>& trajectory, CurvePSQV3& fittedCurve){
-  //   int maxCurveFitIteration_ = 10;
-  //   std::vector<Vector4d> curvePointsWithTime;
-  //   Vector4d startPoint, middlePoint, endPoint;
-  //   Vector4d quaterPoint, quater3Point;
-  //
-  //   double dt = (endTime - startTime) / trajectory.size();
-  //
-  //   startPoint.head(3) = trajectory.front();
-  //   middlePoint.head(3) = trajectory[trajectory.size() / 2];
-  //   quaterPoint.head(3) = trajectory[trajectory.size() / 5];
-  //   quater3Point.head(3) = trajectory[trajectory.size() * 3 / 4];
-  //   endPoint.head(3) = trajectory.back();
-  //   startPoint[3] = startTime;
-  //   middlePoint[3] = (startTime + endTime) / 2;
-  //   quaterPoint[3] = (startTime + endTime) / 5;
-  //   quater3Point[3] = (startTime + endTime) * 3 / 4;
-  //   endPoint[3] = endTime;
-  //
-  //   curvePointsWithTime.push_back(startPoint);
-  //   // curvePointsWithTime.push_back(quaterPoint);
-  //   curvePointsWithTime.push_back(middlePoint);
-  //   // curvePointsWithTime.push_back(quater3Point);
-  //   curvePointsWithTime.push_back(endPoint);
-  //   for (int i = 0; i < maxCurveFitIteration_; i++){
-  //     cout << "line fit trial" << i << endl;
-  //     PolynomialSplineQuinticVector3Curve curve;
-  //     std::vector<curves::Time> times;
-  //     std::vector<CValueType> values;
-  //     for (Vector4d p : curvePointsWithTime){
-  //       times.push_back(p[3]);
-  //       values.push_back(CValueType(p.x(), p.y(), p.z()));
-  //     }
-  //     curve.fitCurve(times, values, initialVelocity_, initialAcceleration_, finalVelocity_, finalAcceleration_);
-  //     std::vector<double> collisionTimes;
-  //     if (curveCollisionCheck(curve, collisionTimes)){
-  //       cout << "There is collision!" << endl;
-  //       int prevIndex = 0;
-  //       for (double t : collisionTimes){
-  //         // cout << "collision time" << t  << endl;
-  //         int collidedIndexInTrajectory = std::round((t - startTime) / dt);
-  //         // cout << "collision index" << collidedIndexInTrajectory << endl;
-  //         if (collidedIndexInTrajectory - prevIndex > 1){
-  //           Vector4d pt;
-  //           pt.head(3) = trajectory[collidedIndexInTrajectory];
-  //           pt[3] = t;
-  //           // cout << "collision point add" << pt << endl;
-  //           curvePointsWithTime.push_back(pt);
-  //         }
-  //         prevIndex = collidedIndexInTrajectory;
-  //       }
-  //     }
-  //     else{
-  //       cout << "curve is fitted without collision" << endl;
-  //       fittedCurve = curve;
-  //       return i;
-  //     }
-  //   }
-  //   // If no collision-free curve is generated
-  //   return -1;
-  // }
-  //
-  // int SimpleChompPlanner::fitFromCurve(CurvePSQV3& initialCurve, CurvePSQV3& resultCurve){
-  //     CValueType value;
-  //     std::vector<Vector3d> trajectory;
-  //     double startTime = initialCurve.getMinTime();
-  //     double endTime = initialCurve.getMaxTime();
-  //     for (double t = startTime; t < endTime; t+=dt_){
-  //       initialCurve.evaluate(value, t);
-  //       Eigen::Vector3d p(value[0], value[1], value[2]);
-  //       trajectory.push_back(p);
-  //       // cout << "trajectory from curve" << p << endl;
-  //     }
-  //     trajectory = chompFit(trajectory);
-  //     // cout << "chomp fit done" << endl;
-  //     if (trajectoryEvaluation(trajectory) < 0)
-  //       return -1;
-  //     // cout << "fit trajectory with curve" << trajectory << endl;
-  //     return fitCurveFromTrajectory(startTime, endTime, trajectory, resultCurve);
-  // }
+  resultCurve.fitCurve(times, values, CinitialVelocity, CinitialAcceleration, CfinalVelocity, CfinalAcceleration);
+}
 
 
 } /* namespace locomotion_planner */
