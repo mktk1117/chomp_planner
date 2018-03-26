@@ -48,7 +48,7 @@ class ChompPlannerNode
   //
   // void planTrajectory(const Eigen::Vector3d start, const Eigen::Vector3d goal);
   void publishCommandTrajectory(const std::vector<Eigen::Vector4d>& trajectory);
-  void publishCommandTrajectory(const std::vector<Eigen::Vector3d>& trajectory);
+  // void publishCommandTrajectory(const std::vector<Eigen::Vector3d>& trajectory);
   void publishCommandTrajectory(const PolynomialSplineQuinticVector3Curve& curve);
   void publishLine(const std::vector<Eigen::Vector4d>& trajectory);
   void publishLineFromCurve(const PolynomialSplineQuinticVector3Curve& curve);
@@ -64,6 +64,7 @@ class ChompPlannerNode
   Eigen::Vector3d startPosition_;
   Eigen::Vector3d startVelocity_;
   Eigen::Vector3d goalPosition_;
+  double currentYaw_;
   double goalYaw_;
 
   // Coordinate parameters
@@ -82,6 +83,7 @@ class ChompPlannerNode
 
   //! Goal/commamd topics.
   ros::Publisher commandTrajectoryPublisher_;
+  ros::Publisher commandPosePublisher_;
   ros::Subscriber clickedPointSubscriber_;
   ros::Subscriber goalPoseSubscriber_;
   ros::Subscriber startPoseSubscriber_;

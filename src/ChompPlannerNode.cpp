@@ -35,6 +35,7 @@ ChompPlannerNode::ChompPlannerNode(const ros::NodeHandle& nodeHandle, const ros:
   esdfMap_.reset(new EsdfMap(esdfConfig));
 
   commandTrajectoryPublisher_ = nodeHandle_.advertise<trajectory_msgs::MultiDOFJointTrajectory>( "/firefly/command/trajectory", 0 );
+  commandPosePublisher_ = nodeHandle_.advertise<geometry_msgs::PoseStamped>( "/firefly/command/pose", 0 );
   esdfMapSubcriber_ = privateNodeHandle_.subscribe("esdf_map", 1,
                                         &ChompPlannerNode::esdfMapCallback, this);
   odometrySubscriber_ = privateNodeHandle_.subscribe("odometry", 1,
@@ -70,6 +71,13 @@ void ChompPlannerNode::odometryCallback(const nav_msgs::Odometry& msg) {
   startVelocity_.x() = msg.twist.twist.linear.x;
   startVelocity_.y() = msg.twist.twist.linear.y;
   startVelocity_.z() = msg.twist.twist.linear.z;
+  Eigen::Quaterniond q;
+  q.x() = msg.pose.pose.orientation.x;
+  q.y() = msg.pose.pose.orientation.y;
+  q.z() = msg.pose.pose.orientation.z;
+  q.w() = msg.pose.pose.orientation.w;
+  auto euler = q.toRotationMatrix().eulerAngles(0, 1, 2);
+  currentYaw_ = euler[2];
   // ROS_INFO_STREAM("got odometry" << msg);
 }
 
@@ -185,12 +193,19 @@ void ChompPlannerNode::publishCommandTrajectory(const std::vector<Eigen::Vector4
   std::cout << "dt = " << dt << std::endl;
 
   Eigen::Vector4d prevPoint = trajectory[0];
+  Eigen::Quaterniond q = AngleAxisd(0, Vector3d::UnitX())
+    * AngleAxisd(0, Vector3d::UnitY())
+    * AngleAxisd(goalYaw_, Vector3d::UnitZ());
   for (Eigen::Vector4d point : trajectory){
     trajectory_msgs::MultiDOFJointTrajectoryPoint p;
     geometry_msgs::Transform transform;
     transform.translation.x = point.x();
     transform.translation.y = point.y();
     transform.translation.z = point.z();
+    transform.rotation.x = q.x();
+    transform.rotation.y = q.y();
+    transform.rotation.z = q.z();
+    transform.rotation.w = q.w();
     p.transforms.push_back(transform);
     p.time_from_start = ros::Duration(point[3]);
     // Eigen::Vector3d velocity = ((point - prevPoint) / dt).head(3);
@@ -206,38 +221,50 @@ void ChompPlannerNode::publishCommandTrajectory(const std::vector<Eigen::Vector4
   commandTrajectoryPublisher_.publish(trajectoryMsg);
 }
 
-void ChompPlannerNode::publishCommandTrajectory(const std::vector<Eigen::Vector3d>& trajectory)
-{
-  trajectory_msgs::MultiDOFJointTrajectory trajectoryMsg;
-  int i = 0;
-  double dt = 0.5;
-  if (trajectory.size() > 0)
-    dt = 10.0 / trajectory.size();
-  std::cout << "dt = " << dt << std::endl;
-
-  Eigen::Vector3d prevPoint = trajectory[0];
-  for (Eigen::Vector3d point : trajectory){
-    trajectory_msgs::MultiDOFJointTrajectoryPoint p;
-    geometry_msgs::Transform transform;
-    transform.translation.x = point.x();
-    transform.translation.y = point.y();
-    transform.translation.z = point.z();
-    p.transforms.push_back(transform);
-    std::cout << "i = " << i << std::endl;
-    p.time_from_start = ros::Duration((float)i * dt);
-    std::cout << "point = " << point << ", prevPoint = " << prevPoint << std::endl;
-    Eigen::Vector3d velocity = (point - prevPoint) / dt;
-    geometry_msgs::Twist twist;
-    twist.linear.x = velocity.x();
-    twist.linear.y = velocity.y();
-    twist.linear.z = velocity.z();
-    p.velocities.push_back(twist);
-    trajectoryMsg.points.push_back(p);
-    prevPoint = point;
-    i++;
-  }
-  commandTrajectoryPublisher_.publish(trajectoryMsg);
-}
+// void ChompPlannerNode::publishCommandTrajectory(const std::vector<Eigen::Vector3d>& trajectory)
+// {
+//   double dt = 0.1;
+//   if (trajectory.size() > 0) {
+//     double t = trajectory.back()[3] - trajectory.front()[3];
+//     dt = t / trajectory.size();
+//   }
+//   std::vector<Eigen::Vector4d> trajectoryWithTime;
+//   double 
+//   for (Eigen::Vector3d point : trajectory){
+//     Eigen::Vector4d p;
+//     p.head(3) = point;
+//     p[3] = t;
+//     trajectoryWithTime.push_back(
+//   trajectory_msgs::MultiDOFJointTrajectory trajectoryMsg;
+//   int i = 0;
+//   double dt = 0.5;
+//   if (trajectory.size() > 0)
+//     dt = 10.0 / trajectory.size();
+//   std::cout << "dt = " << dt << std::endl;
+//
+//   Eigen::Vector3d prevPoint = trajectory[0];
+//   for (Eigen::Vector3d point : trajectory){
+//     trajectory_msgs::MultiDOFJointTrajectoryPoint p;
+//     geometry_msgs::Transform transform;
+//     transform.translation.x = point.x();
+//     transform.translation.y = point.y();
+//     transform.translation.z = point.z();
+//     p.transforms.push_back(transform);
+//     std::cout << "i = " << i << std::endl;
+//     p.time_from_start = ros::Duration((float)i * dt);
+//     std::cout << "point = " << point << ", prevPoint = " << prevPoint << std::endl;
+//     Eigen::Vector3d velocity = (point - prevPoint) / dt;
+//     geometry_msgs::Twist twist;
+//     twist.linear.x = velocity.x();
+//     twist.linear.y = velocity.y();
+//     twist.linear.z = velocity.z();
+//     p.velocities.push_back(twist);
+//     trajectoryMsg.points.push_back(p);
+//     prevPoint = point;
+//     i++;
+//   }
+//   commandTrajectoryPublisher_.publish(trajectoryMsg);
+// }
 
 void ChompPlannerNode::publishCommandTrajectory(const PolynomialSplineQuinticVector3Curve& curve){
   CValueType value;
@@ -383,6 +410,11 @@ void ChompPlannerNode::goalPoseCallback(const geometry_msgs::PoseStamped& messag
   q.w() = message.pose.orientation.w;
   auto euler = q.toRotationMatrix().eulerAngles(0, 1, 2);
   goalYaw_ = euler[2];
+  if ((goalPosition_ - startPosition_).norm() < 0.01) {
+    if (fabs(goalYaw_ - currentYaw_) > 0.1) {
+      commandPosePublisher_.publish(message);
+    }
+  }
   // ROS_INFO_STREAM("goalPosition = " << goalPosition_);
   // ROS_INFO_STREAM("goalyaw = " << goalYaw_);
 }
